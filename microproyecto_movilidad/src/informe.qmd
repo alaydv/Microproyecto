@@ -13,6 +13,20 @@ execute:
   echo: true
   warning: false
 ---
+```{r}
+#| label: datos-resumen
+#| include: false
+# Cálculos previos para el resumen ejecutivo (misma población analítica que el resto del informe)
+set.seed(123)
+source("src/preprocesar.R")
+x_res <- subset(base, !is.na(base$zona_origen) & !is.na(base$viaje_min) & base$viaje_min > 0)$viaje_min
+boot_med_res <- replicate(2000, median(sample(x_res, replace = TRUE)))
+ic_res <- as.numeric(quantile(boot_med_res, c(0.05, 0.95)))
+```
+
+## Resumen ejecutivo
+
+Se analizaron `r length(x_res)` viajes válidos de todos los medios de transporte, con el fin de definir un tiempo de referencia para planificación. Los tiempos son asimétricos: la media es `r round(mean(x_res), 1)` min y la mediana `r round(median(x_res), 1)` min, porque unos pocos viajes con congestión extrema elevan el promedio. Se recomienda usar la **mediana (`r round(median(x_res), 1)` min; IC 90 % bootstrap: `r round(ic_res[1], 1)` a `r round(ic_res[2], 1)` min)** como tiempo de un viaje típico y el percentil 90 (`r round(quantile(x_res, 0.90), 1)` min) como referencia de planificación para evitar subestimar los viajes lentos. La cifra es válida solo para viajes registrados con duración válida, no necesariamente para todos los desplazamientos de la ciudad.
 
 ```{r}
 #| include: false
@@ -275,3 +289,109 @@ A partir de la @fig-tlc y de los cálculos de error estándar, se responden las 
 * **Coincidencia entre el error estándar teórico y el empírico:** Para muestras de tamaño $n = 50$, el valor obtenido por fórmula ($\text{SE}_{\text{fórmula}} = `r round(se_formula_50, 3)`\text{ min}$) y la desviación estándar de las 2.000 medias simuladas ($\text{SE}_{\text{empírico}} = `r round(se_empirico_50, 3)`\text{ min}$) **coinciden casi exactamente** (diferencia de apenas $`r round(abs(se_formula_50 - se_empirico_50), 3)`\text{ min}$), validando empíricamente la expresión $\sigma / \sqrt{n}$.
 * **Efecto de cuadruplicar el tamaño muestral ($n$):** Dado que $n$ está dentro de una raíz cuadrada en el denominador, **cuadruplicar el tamaño de la muestra reduce el error estándar exactamente a la mitad** ($\sqrt{4n} = 2\sqrt{n}$). Por ejemplo, al pasar de $n = 25$ ($\text{SE} = `r round(se_n25, 3)`\text{ min}$) a $n = 100$ ($\text{SE} = `r round(se_n100, 3)`\text{ min}$), la incertidumbre de la media disminuye en un 50 %.
 * **Diferencia entre desviación estándar ($s$) y error estándar ($\text{SE}$):** La **desviación estándar ($s = `r round(sd(x), 2)`\text{ min}$)** mide cuánto varían los *viajes individuales* entre sí (por ejemplo, la diferencia entre un trayecto rápido en bicicleta y uno lento en bus durante hora pico); este valor es una propiedad de la población y **no disminuye** al recoger más datos. En cambio, el **error estándar ($\text{SE}$)** mide la incertidumbre o variabilidad de la *media muestral* al repetir el muestreo, y **sí disminuye** conforme aumenta el tamaño de la muestra $n$.
+
+## Intervalos bootstrap y clásico, con interpretación
+
+Para cuantificar la incertidumbre de la estimación se construyen intervalos de confianza del 90 % de dos formas: **bootstrap percentil** (2.000 remuestreos con reemplazo) y el **procedimiento clásico basado en la distribución $t$ de Student**. Primero se trabaja con una muestra aleatoria de $n = 40$ viajes (ejercicio de la guía) y luego con toda la población analítica para estimar la media, la mediana y el percentil 90, que son las tres cifras candidatas para la recomendación.
+
+```{r}
+#| label: tbl-intervalos
+#| tbl-cap: "Intervalos de confianza del 90 % mediante bootstrap percentil y distribución t (muestra de n = 40 y población analítica completa)."
+set.seed(123)
+
+# 1. Muestra aleatoria de tamaño n = 40
+muestra <- sample(x, 40)
+
+# Bootstrap percentil con 2000 réplicas sobre la muestra de n = 40
+boot <- replicate(2000, mean(sample(muestra, replace = TRUE)))
+ic_boot <- as.numeric(quantile(boot, c(0.05, 0.95)))
+
+# Intervalo clásico t de Student al 90 %
+ic_t <- as.numeric(t.test(muestra, conf.level = 0.90)$conf.int)
+
+# Efecto del nivel de confianza (99 %) y del tamaño muestral (n cuadruplicado = 160)
+ic_t99 <- as.numeric(t.test(muestra, conf.level = 0.99)$conf.int)
+muestra160 <- sample(x, 160)
+ic_t160 <- as.numeric(t.test(muestra160, conf.level = 0.90)$conf.int)
+
+# 2. Bootstrap sobre toda la población analítica (base de la recomendación)
+boot_pob_media <- replicate(2000, mean(sample(x, replace = TRUE)))
+ic_pob_media_90 <- as.numeric(quantile(boot_pob_media, c(0.05, 0.95)))
+
+ic_pob_mediana_90 <- ic_res   # mismo bootstrap de la mediana usado en el resumen ejecutivo
+
+boot_pob_p90 <- replicate(2000, as.numeric(quantile(sample(x, replace = TRUE), 0.90)))
+ic_pob_p90_90 <- as.numeric(quantile(boot_pob_p90, c(0.05, 0.95)))
+
+tabla_ic <- data.frame(
+  Estimacion = c(
+    "Media (muestra n = 40) — Bootstrap percentil 90 %",
+    "Media (muestra n = 40) — Clásico t 90 %",
+    "Media (muestra n = 40) — Clásico t 99 %",
+    "Media (muestra n = 160) — Clásico t 90 %",
+    paste0("Media (población N = ", length(x), ") — Bootstrap 90 %"),
+    paste0("Mediana (población N = ", length(x), ") — Bootstrap 90 %"),
+    paste0("Percentil 90 (población N = ", length(x), ") — Bootstrap 90 %")
+  ),
+  Puntual = round(c(mean(muestra), mean(muestra), mean(muestra), mean(muestra160),
+                    mean(x), median(x), as.numeric(quantile(x, 0.90))), 2),
+  Inferior = round(c(ic_boot[1], ic_t[1], ic_t99[1], ic_t160[1],
+                     ic_pob_media_90[1], ic_pob_mediana_90[1], ic_pob_p90_90[1]), 2),
+  Superior = round(c(ic_boot[2], ic_t[2], ic_t99[2], ic_t160[2],
+                     ic_pob_media_90[2], ic_pob_mediana_90[2], ic_pob_p90_90[2]), 2),
+  Anchura = round(c(diff(ic_boot), diff(ic_t), diff(ic_t99), diff(ic_t160),
+                    diff(ic_pob_media_90), diff(ic_pob_mediana_90), diff(ic_pob_p90_90)), 2)
+)
+
+knitr::kable(tabla_ic, row.names = FALSE,
+             col.names = c("Estimador y método", "Puntual (min)", "Límite inf. (min)",
+                           "Límite sup. (min)", "Anchura (min)"))
+```
+
+```{r}
+#| label: fig-boot
+#| fig-cap: "Distribución bootstrap de la media (muestra de n = 40) con los intervalos bootstrap y t del 90 %."
+hist(boot, breaks = 30, col = "#A6CEE3", border = "white",
+     main = "Bootstrap de la media (n = 40, 2.000 réplicas)",
+     xlab = "Media remuestreada (min)", ylab = "Frecuencia")
+abline(v = ic_boot, col = "#D95F02", lwd = 2, lty = 2)
+abline(v = ic_t, col = "#1B7837", lwd = 2, lty = 3)
+abline(v = mean(muestra), col = "black", lwd = 2)
+legend("topright", legend = c("IC bootstrap 90 %", "IC t 90 %", "Media muestral"),
+       col = c("#D95F02", "#1B7837", "black"), lty = c(2, 3, 1), lwd = 2, bty = "n")
+```
+
+```{r}
+#| label: tbl-cobertura
+#| tbl-cap: "Cobertura empírica del intervalo t del 90 % en 1.000 simulaciones por tamaño muestral."
+set.seed(123)
+
+cobertura <- function(n, reps = 1000) {
+  mean(replicate(reps, {
+    ic <- t.test(sample(x, n), conf.level = 0.90)$conf.int
+    ic[1] <= mu & mu <= ic[2]
+  }))
+}
+
+tamanos_cob <- c(10, 30, 100)
+cob_obs <- sapply(tamanos_cob, cobertura)
+
+tabla_cob <- data.frame(
+  n = tamanos_cob,
+  Nominal = "90,0 %",
+  Observada = paste0(round(cob_obs * 100, 1), " %")
+)
+
+knitr::kable(tabla_cob, row.names = FALSE,
+             col.names = c("Tamaño muestral (n)", "Confianza nominal", "Cobertura empírica observada"))
+
+cob_txt <- if (all(cob_obs >= 0.88)) {
+  "se mantuvo cercana al 90 % nominal en los tres tamaños, por lo que el intervalo t resulta confiable en estos datos"
+} else {
+  "quedó por debajo del 90 % nominal en al menos un tamaño, lo que indica que la asimetría y los viajes extremos hacen que el intervalo t sea algo optimista con muestras pequeñas"
+}
+```
+
+Los intervalos se resumen en la @tbl-intervalos y en la @fig-boot, y la verificación de su tasa de acierto en la @tbl-cobertura.
+
+**Interpretación.** Con la muestra de $n = 40$, el intervalo bootstrap del 90 % va de `r round(ic_boot[1], 2)` a `r round(ic_boot[2], 2)` min (anchura de `r round(diff(ic_boot), 2)` min) y el intervalo $t$ va de `r round(ic_t[1], 2)` a `r round(ic_t[2], 2)` min (anchura de `r round(diff(ic_t), 2)` min); ambos son muy parecidos porque la media muestral, aun con datos asimétricos, tiene una distribución aproximadamente simétrica. Un nivel de confianza del 90 % tiene un sentido frecuentista: si se repitiera muchas veces el muestreo y se calculara cada vez el intervalo con el mismo procedimiento, cerca del 90 % de esos intervalos contendría la media poblacional $\mu = `r round(mu, 2)`$ min. No equivale a decir que hay una probabilidad del 90 % de que $\mu$ esté dentro de un intervalo ya calculado: $\mu$ es un valor fijo y ese intervalo concreto la contiene o no la contiene. Al aumentar $n$ el error estándar disminuye y el intervalo se estrecha (con $n = 160$ la anchura del intervalo $t$ es `r round(diff(ic_t160), 2)` min frente a `r round(diff(ic_t), 2)` min con $n = 40$), mientras que exigir 99 % de confianza lo ensancha (`r round(diff(ic_t99), 2)` min con $n = 40$), porque se usa un valor crítico mayor a cambio de más seguridad. Finalmente, la cobertura observada `r cob_txt` (`r round(cob_obs[1] * 100, 1)` %, `r round(cob_obs[2] * 100, 1)` % y `r round(cob_obs[3] * 100, 1)` % con $n = 10$, $30$ y $100$).
